@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">Mac Storage Manager header</title>
+  <desc id="desc">Audit-first macOS storage cleanup banner.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="52%" stop-color="#134e4a"/>
+      <stop offset="100%" stop-color="#0ea5a4"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0.82" cy="0.18" r="0.45">
+      <stop offset="0%" stop-color="#5eead4" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#5eead4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0.14" cy="0.9" r="0.38">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#06111f" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#10233f" stop-opacity="0.72"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a7f3d0"/>
+      <stop offset="100%" stop-color="#5eead4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="22" flood-color="#021018" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="360" fill="url(#bg)"/>
+  <rect width="1200" height="360" fill="url(#glowA)"/>
+  <rect width="1200" height="360" fill="url(#glowB)"/>
+
+  <g opacity="0.07" stroke="#ffffff" stroke-width="1">
+    <path d="M0 56H1200"/>
+    <path d="M0 120H1200"/>
+    <path d="M0 184H1200"/>
+    <path d="M0 248H1200"/>
+    <path d="M0 312H1200"/>
+    <path d="M96 0V360"/>
+    <path d="M240 0V360"/>
+    <path d="M384 0V360"/>
+    <path d="M528 0V360"/>
+    <path d="M672 0V360"/>
+    <path d="M816 0V360"/>
+    <path d="M960 0V360"/>
+    <path d="M1104 0V360"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="48" y="42" width="264" height="276" rx="34" fill="url(#panel)" stroke="#ffffff" stroke-opacity="0.12"/>
+    <circle cx="180" cy="182" r="92" fill="none" stroke="#d1fae5" stroke-opacity="0.18" stroke-width="18"/>
+    <circle cx="180" cy="182" r="62" fill="#08111f" fill-opacity="0.88" stroke="#a7f3d0" stroke-opacity="0.28" stroke-width="2"/>
+    <path d="M180 88 A94 94 0 0 1 256 154" fill="none" stroke="url(#accent)" stroke-width="10" stroke-linecap="round"/>
+    <path d="M126 238C145 220 165 206 188 198" fill="none" stroke="#5eead4" stroke-width="12" stroke-linecap="round"/>
+    <path d="M120 242C154 250 186 250 222 240" fill="none" stroke="#e2e8f0" stroke-opacity="0.18" stroke-width="6" stroke-linecap="round"/>
+    <path d="M186 202L215 168" fill="none" stroke="#f8fafc" stroke-width="6" stroke-linecap="round"/>
+    <path d="M214 167L224 157" fill="none" stroke="#f8fafc" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="216" cy="124" r="6" fill="#f8fafc" fill-opacity="0.86"/>
+    <circle cx="252" cy="212" r="4" fill="#f8fafc" fill-opacity="0.76"/>
+    <circle cx="132" cy="122" r="5" fill="#a7f3d0" fill-opacity="0.82"/>
+  </g>
+
+  <text x="352" y="126" fill="#f8fafc" font-family="Avenir Next, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="52" font-weight="700" letter-spacing="-0.02em">
+    Mac Storage Manager
+  </text>
+  <text x="352" y="166" fill="#d1fae5" font-family="Avenir Next, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="21" font-weight="500">
+    Audit first. Clean safely. Keep the good stuff.
+  </text>
+  <text x="352" y="196" fill="#cbd5e1" fill-opacity="0.95" font-family="Avenir Next, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="400">
+    A calm, practical cleanup skill for macOS storage work.
+  </text>
+
+  <g font-family="Avenir Next, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="600">
+    <rect x="352" y="228" width="86" height="34" rx="17" fill="#e2e8f0" fill-opacity="0.12" stroke="#ffffff" stroke-opacity="0.14"/>
+    <text x="395" y="250" fill="#f8fafc" text-anchor="middle">Audit</text>
+
+    <rect x="446" y="228" width="78" height="34" rx="17" fill="#e2e8f0" fill-opacity="0.12" stroke="#ffffff" stroke-opacity="0.14"/>
+    <text x="485" y="250" fill="#f8fafc" text-anchor="middle">Plan</text>
+
+    <rect x="532" y="228" width="72" height="34" rx="17" fill="#e2e8f0" fill-opacity="0.12" stroke="#ffffff" stroke-opacity="0.14"/>
+    <text x="568" y="250" fill="#f8fafc" text-anchor="middle">Apply</text>
+
+    <rect x="612" y="228" width="86" height="34" rx="17" fill="#e2e8f0" fill-opacity="0.12" stroke="#ffffff" stroke-opacity="0.14"/>
+    <text x="655" y="250" fill="#f8fafc" text-anchor="middle">Report</text>
+  </g>
+
+  <path d="M352 282H810" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1"/>
+
+  <text x="352" y="312" fill="#e2e8f0" fill-opacity="0.78" font-family="Avenir Next, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="500">
+    Safety-first cleanup for macOS disks, caches, and dev leftovers.
+  </text>
+</svg>
