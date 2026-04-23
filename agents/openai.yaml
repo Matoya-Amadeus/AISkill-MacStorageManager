@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mac Storage Manager"
+  short_description: "Audit and clean macOS storage safely"
+  default_prompt: "Audit macOS storage, report the largest consumers, and clean only after explicit confirmation."
