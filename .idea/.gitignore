@@ -13,3 +13,7 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+
+# Local IDE project state
+/indexLayout.xml
+/vcs.xml
