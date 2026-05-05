@@ -317,11 +317,5 @@ Normal cleanup is blocked to avoid accidental deletion; fix the ownership first,
 
 </details>
 
-## License
-## License
-
-MIT。  
-MIT.
-
 由 **AI·Maho** 和 **人类·Matoya** 共同维护
 Maintained jointly by **AI·Maho** and **Human·Matoya**
