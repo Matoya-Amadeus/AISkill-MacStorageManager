@@ -509,57 +509,6 @@ python3 -m unittest -v tests.test_mac_storage_manager
 当前测试覆盖路径脱敏、敏感诊断脱敏、hidden-home 行为和自定义 system roots。  
 Current tests cover path redaction, sensitive-note redaction, hidden-home behavior, and custom system roots.
 
-## 常见问题
-## FAQ
-
-<details>
-<summary><strong>它会直接清空 Downloads 吗？ / Will it wipe Downloads automatically?</strong></summary>
-
-不会。`Downloads` 是高风险目标，需要精确 `--confirm-targets downloads`。  
-No. `Downloads` is high risk and requires exact `--confirm-targets downloads`.
-
-</details>
-
-<details>
-<summary><strong>`safe_clean.sh` 安全吗？ / Is `safe_clean.sh` safe?</strong></summary>
-
-它只会自动放行低风险目标，因为内部使用的是 `clean --apply --yes --markdown`。高风险目标仍会被 block。  
-It only auto-approves low-risk targets because it runs `clean --apply --yes --markdown`. High-risk targets remain blocked.
-
-</details>
-
-<details>
-<summary><strong>我能把报告发给别人看吗？ / Can I share the report?</strong></summary>
-
-默认会做路径和部分敏感诊断脱敏，但分享前仍建议你快速看一遍。  
-Paths and some sensitive diagnostics are redacted by default, but review the report before sharing.
-
-</details>
-
-<details>
-<summary><strong>为什么 npm 缓存会被 block？ / Why is npm cache blocked?</strong></summary>
-
-如果缓存里混进 root-owned 或非当前用户 owner 的文件，脚本会 block，避免越权或误删。先修 owner，再决定是否继续。  
-If the cache contains root-owned or non-current-user files, the script blocks cleanup to avoid unsafe deletion. Fix ownership first, then decide whether to continue.
-
-</details>
-
-<details>
-<summary><strong>支持哪些 macOS 版本？ / Which macOS versions are supported?</strong></summary>
-
-仓库当前没有声明精确的最低 macOS 版本。原则上它依赖 Python 标准库和常见 macOS 路径；实际清理能力取决于你的系统路径和可选工具是否存在。  
-The repo does not currently declare an exact minimum macOS version. It relies on Python standard library and common macOS paths; actual coverage depends on your system paths and optional tools.
-
-</details>
-
-<details>
-<summary><strong>这是 App 吗？有图形界面吗？ / Is this an app? Does it have a GUI?</strong></summary>
-
-不是。它是 CLI 工具包和 agent skill，没有图形界面。  
-No. It is a CLI toolkit and agent skill, not a GUI app.
-
-</details>
-
 ---
 
 由 **AI·Maho** 和 **人类·Matoya** 共同维护  
