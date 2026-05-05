@@ -1,4 +1,4 @@
 interface:
   display_name: "Mac Storage Manager"
-  short_description: "Audit and clean macOS storage safely"
-  default_prompt: "Audit macOS storage, report the largest consumers, and clean only after explicit confirmation."
+  short_description: "Audit macOS storage, list exact targets, then clean safely"
+  default_prompt: "Audit macOS storage, list exact cleanup targets and blocked items first, then clean only within the explicitly approved target list."

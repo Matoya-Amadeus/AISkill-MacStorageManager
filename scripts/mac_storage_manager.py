@@ -24,6 +24,14 @@ DEFAULT_SYSTEM_ROOTS: tuple[Path, ...] = (
     Path("/tmp"),
 )
 
+DEFAULT_PUBLIC_ROOTS: tuple[Path, ...] = (
+    Path("/Applications"),
+    Path("/Library"),
+    Path("/System"),
+    Path("/private/var"),
+    Path("/tmp"),
+)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
@@ -41,6 +49,56 @@ def human_bytes(value: int) -> str:
             return f"{size:.2f} {unit}"
         size /= 1024.0
     return f"{size:.2f} TiB"
+
+
+def _is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def public_display_path(path: Path, *, home: Path, root: Path, public_roots: Sequence[Path]) -> str:
+    resolved = path.expanduser().resolve()
+    home_resolved = home.expanduser().resolve()
+    root_resolved = root.expanduser().resolve()
+    public_root_paths = tuple(public_root.expanduser().resolve() for public_root in public_roots)
+    if root_resolved != home_resolved and resolved == root_resolved:
+        return "<root>"
+    if root_resolved != home_resolved and _is_relative_to(resolved, root_resolved):
+        rel = resolved.relative_to(root_resolved)
+        return "<root>" if str(rel) == "." else f"<root>/{rel.as_posix()}"
+    if resolved == home_resolved:
+        return "~"
+    if _is_relative_to(resolved, home_resolved):
+        rel = resolved.relative_to(home_resolved)
+        return "~" if str(rel) == "." else f"~/{rel.as_posix()}"
+    for public_root in public_root_paths:
+        if resolved == public_root or _is_relative_to(resolved, public_root):
+            return resolved.as_posix()
+    return f"<external>/{resolved.name}" if resolved.name else "<external>"
+
+
+def public_note(note: str) -> str:
+    if note.startswith("container_bundle_id="):
+        return "container_bundle_id=<redacted>"
+    if note.startswith("non_owner_path="):
+        return "non_owner_path=<redacted>"
+    return note
+
+
+def report_public_roots(context: "StorageContext") -> tuple[Path, ...]:
+    seen: set[str] = set()
+    roots: list[Path] = []
+    for raw_root in (*DEFAULT_PUBLIC_ROOTS, *context.system_roots):
+        resolved = raw_root.expanduser().resolve()
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(resolved)
+    return tuple(roots)
 
 
 def expand_path(value: str | Path, home: Path) -> Path:
@@ -211,6 +269,44 @@ def _read_bundle_id(app_path: Path) -> str:
         return ""
 
 
+def _read_container_bundle_id(container_path: Path) -> str:
+    metadata = container_path / ".com.apple.containermanagerd.metadata.plist"
+    if not metadata.exists():
+        return ""
+    try:
+        with metadata.open("rb") as fh:
+            data = plistlib.load(fh)
+        return str(data.get("MCMMetadataIdentifier", "") or "")
+    except Exception:
+        return ""
+
+
+def _allocated_bytes(path: Path) -> int:
+    total = 0
+    try:
+        if path.is_file():
+            st = path.stat()
+            return int(getattr(st, "st_blocks", 0) * 512) or int(st.st_size)
+        for file_path, st in walk_files(path):
+            total += int(getattr(st, "st_blocks", 0) * 512) or int(st.st_size)
+    except Exception:
+        return 0
+    return total
+
+
+def _find_non_owner_paths(root: Path, owner_uid: int, limit: int = 10) -> list[str]:
+    mismatches: list[str] = []
+    try:
+        for current, st in walk_files(root):
+            if int(st.st_uid) != owner_uid:
+                mismatches.append(str(current))
+                if len(mismatches) >= limit:
+                    break
+    except Exception:
+        return mismatches
+    return mismatches
+
+
 def _shallow_children(root: Path) -> Iterable[Path]:
     if not root.exists():
         return []
@@ -260,7 +356,7 @@ def _cleanup_tree(
             except FileNotFoundError:
                 continue
             if file_older_than(stat_result, cutoff_ts):
-                if not dry_run:
+                if not dry_run and not trash:
                     reclaimed += int(stat_result.st_size)
                 record(root)
                 if not dry_run:
@@ -271,11 +367,9 @@ def _cleanup_tree(
             continue
 
         if trash and move_whole_paths:
-            # App leftovers are safest when moved as a unit if the whole tree is stale.
+            # High-risk approved paths are safest when moved as a whole unit.
             tree = list(walk_files(root))
-            if tree and all(file_older_than(stat_result, cutoff_ts) for _path, stat_result in tree):
-                tree_reclaimed = sum(int(stat_result.st_size) for _path, stat_result in tree)
-                reclaimed += tree_reclaimed
+            if tree or root.exists():
                 record(root)
                 if not dry_run:
                     move_to_trash(root, home)
@@ -291,7 +385,7 @@ def _cleanup_tree(
                     continue
                 if not file_older_than(stat_result, cutoff_ts):
                     continue
-                if not dry_run:
+                if not dry_run and not trash:
                     reclaimed += int(stat_result.st_size)
                 record(candidate)
                 if not dry_run:
@@ -327,6 +421,8 @@ class StorageContext:
     yes: bool = False
     include_system: bool = False
     confirm_targets: frozenset[str] = frozenset()
+    approved_targets: frozenset[str] = frozenset()
+    include_hidden_home: bool = False
     flutter_search_root: Path | None = None
     app_path: Path | None = None
     system_roots: tuple[Path, ...] = field(default_factory=lambda: DEFAULT_SYSTEM_ROOTS)
@@ -380,6 +476,7 @@ class PlanItem:
     command_output: str = ""
     requires_confirmation: bool = False
     recoverable: bool = True
+    scope_status: str = "in_scope"
 
 
 @dataclass
@@ -400,6 +497,7 @@ class StorageReport:
     top_consumers: list[dict[str, Any]]
     plan_items: list[PlanItem]
     notes: list[str] = field(default_factory=list)
+    approved_targets: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -419,6 +517,7 @@ class StorageReport:
             "top_consumers": self.top_consumers,
             "plan_items": [plan_item_to_dict(item) for item in self.plan_items],
             "notes": list(self.notes),
+            "approved_targets": list(self.approved_targets),
         }
 
 
@@ -437,6 +536,7 @@ def plan_item_to_dict(item: PlanItem) -> dict[str, Any]:
         "command_output": item.command_output,
         "requires_confirmation": item.requires_confirmation,
         "recoverable": item.recoverable,
+        "scope_status": item.scope_status,
     }
 
 
@@ -479,6 +579,8 @@ class StorageManager:
     def _validate_static_context(self) -> None:
         if self.context.days_to_keep < 0:
             raise ValueError("days_to_keep must be >= 0")
+        if len(self.context.system_roots) < 4:
+            raise ValueError("system_roots must include at least four paths")
 
     def _validate_runtime_context(self) -> None:
         if not self.context.root.exists():
@@ -699,6 +801,59 @@ class StorageManager:
             metadata={"command_label": "flutter clean"},
         )
 
+        if self.context.include_hidden_home:
+            add(
+                "home-dot-git",
+                "Home directory git metadata",
+                "hidden-home",
+                "trash_tree",
+                [home / ".git"],
+                risk="high",
+                requires_confirmation=True,
+                metadata={"cleanup_requires_approved_plan": True, "move_whole_paths": True},
+            )
+            add(
+                "home-npm-cache",
+                "Home npm cache",
+                "hidden-home",
+                "purge_tree",
+                [home / ".npm" / "_cacache", home / ".npm" / "_npx"],
+                risk="low",
+                metadata={"cleanup_requires_approved_plan": True},
+            )
+            add(
+                "home-precommit-cache",
+                "Home pre-commit cache",
+                "hidden-home",
+                "purge_tree",
+                [home / ".cache" / "pre-commit"],
+                risk="low",
+                metadata={"cleanup_requires_approved_plan": True},
+            )
+            for child in sorted(home.iterdir(), key=lambda item: item.name.lower()):
+                if not child.name.startswith(".") or child.name in {".", "..", ".Trash"}:
+                    continue
+                if child in {home / ".git", home / ".npm", home / ".cache"}:
+                    continue
+                if child.name in {".ssh", ".config"}:
+                    continue
+                target_id = f"hidden-home:{child.name.lstrip('.') or 'dot'}"
+                metadata = {
+                    "cleanup_requires_approved_plan": True,
+                    "hidden_home_path": str(child),
+                    "move_whole_paths": True,
+                }
+                add(
+                    target_id,
+                    f"Hidden home item ({child.name})",
+                    "hidden-home",
+                    "trash_tree",
+                    [child],
+                    risk="high",
+                    requires_confirmation=True,
+                    metadata=metadata,
+                )
+
         if self.context.include_system:
             add(
                 "system-caches",
@@ -857,6 +1012,7 @@ class StorageManager:
     def scan_targets(self, targets: Sequence[CleanupTarget]) -> list[TargetScan]:
         out: list[TargetScan] = []
         cutoff_ts = time.time() - max(0, self.context.days_to_keep) * 24 * 60 * 60
+        owner_uid = os.getuid()
         for target in targets:
             cached = self.cache.get(target.target_id)
             if cached is not None:
@@ -888,17 +1044,46 @@ class StorageManager:
                 if stats["oldest_mtime"] is not None:
                     oldest_mtime = float(stats["oldest_mtime"]) if oldest_mtime is None else min(oldest_mtime, float(stats["oldest_mtime"]))
 
+            notes: list[str] = []
+            for path in target.paths:
+                if not path.exists():
+                    continue
+                if path.name == "Docker.raw":
+                    allocated = _allocated_bytes(path)
+                    if allocated and allocated != total_bytes:
+                        notes.append(f"allocated_bytes={allocated}")
+                if path.name == ".git" and path.resolve() == (self.context.home / ".git").resolve():
+                    notes.append("home directory appears to be a git worktree root")
+                if "Containers" in path.parts and path.parent.name == "Containers":
+                    bundle_id = _read_container_bundle_id(path)
+                    if bundle_id:
+                        notes.append(f"container_bundle_id={bundle_id}")
+                if "_cacache" in path.parts:
+                    non_owner_paths = _find_non_owner_paths(path, owner_uid)
+                    if non_owner_paths:
+                        notes.append(f"non_owner_entries={len(non_owner_paths)}")
+                        notes.extend(f"non_owner_path={item}" for item in non_owner_paths[:3])
+
             scan = TargetScan(
                 target=target,
                 exists=exists,
                 total_bytes=total_bytes,
-                eligible_bytes=eligible_bytes if target.kind != "command" else total_bytes,
+                eligible_bytes=(
+                    total_bytes
+                    if target.kind == "command" or target.metadata.get("move_whole_paths")
+                    else eligible_bytes
+                ),
                 total_files=total_files,
-                eligible_files=eligible_files if target.kind != "command" else total_files,
+                eligible_files=(
+                    total_files
+                    if target.kind == "command" or target.metadata.get("move_whole_paths")
+                    else eligible_files
+                ),
                 newest_mtime=newest_mtime,
                 oldest_mtime=oldest_mtime,
                 existing_paths=tuple(existing_paths),
                 missing_paths=tuple(missing_paths),
+                notes=tuple(notes),
             )
             self.cache.store(scan)
             out.append(scan)
@@ -911,8 +1096,17 @@ class StorageManager:
             reason = ""
             status = "planned"
             estimated = scan.eligible_bytes
+            scope_status = "in_scope"
 
-            if not scan.exists:
+            if target.metadata.get("cleanup_requires_approved_plan") and not self.context.approved_targets:
+                status = "blocked"
+                reason = "approved cleanup plan required before apply"
+                scope_status = "outside_approved_plan"
+            elif self.context.approved_targets and target.metadata.get("cleanup_requires_approved_plan") and target.target_id not in self.context.approved_targets:
+                status = "blocked"
+                reason = "outside approved cleanup plan"
+                scope_status = "outside_approved_plan"
+            elif not scan.exists:
                 status = "skipped"
                 reason = "target path missing"
             elif target.required_tools and any(self.runner.which(tool) is None for tool in target.required_tools):
@@ -921,6 +1115,9 @@ class StorageManager:
             elif target.target_id == "docker-prune" and not self._docker_context_is_local():
                 status = "skipped"
                 reason = "docker context is remote"
+            elif any(note.startswith("non_owner_entries=") for note in scan.notes):
+                status = "blocked"
+                reason = "ownership mismatch; fix owner before cleanup"
             elif target.requires_confirmation and not self._is_confirmed(target):
                 status = "blocked"
                 reason = "explicit confirmation required"
@@ -947,14 +1144,19 @@ class StorageManager:
                     paths=scan.existing_paths,
                     requires_confirmation=target.requires_confirmation,
                     recoverable=target.recoverable,
+                    scope_status=scope_status,
                 )
             )
         return out
 
     def _is_confirmed(self, target: CleanupTarget) -> bool:
-        if self.context.yes:
+        if target.target_id in self.context.confirm_targets:
             return True
-        return target.target_id in self.context.confirm_targets or target.category in self.context.confirm_targets
+        if target.category in self.context.confirm_targets and target.risk == "low":
+            return True
+        if self.context.yes and target.risk == "low":
+            return True
+        return False
 
     def _docker_context_is_local(self) -> bool:
         if self.runner.which("docker") is None:
@@ -1085,6 +1287,7 @@ class StorageManager:
     def _build_top_consumers(self, scans: Sequence[TargetScan]) -> list[dict[str, Any]]:
         ordered = sorted(scans, key=lambda scan: (scan.eligible_bytes, scan.total_bytes), reverse=True)
         out: list[dict[str, Any]] = []
+        public_roots = report_public_roots(self.context)
         for scan in ordered:
             out.append(
                 {
@@ -1096,11 +1299,36 @@ class StorageManager:
                     "status": "missing" if not scan.exists else "present",
                     "total_bytes": scan.total_bytes,
                     "eligible_bytes": scan.eligible_bytes,
-                    "paths": list(scan.existing_paths),
-                    "notes": list(scan.notes),
+                    "paths": [
+                        public_display_path(Path(path), home=self.context.home, root=self.context.root, public_roots=public_roots)
+                        for path in scan.existing_paths
+                    ],
+                    "notes": [public_note(note) for note in scan.notes],
                 }
             )
         return out
+
+    def _public_plan_item(self, item: PlanItem) -> PlanItem:
+        public_roots = report_public_roots(self.context)
+        return PlanItem(
+            target_id=item.target_id,
+            name=item.name,
+            category=item.category,
+            kind=item.kind,
+            risk=item.risk,
+            status=item.status,
+            reason=item.reason,
+            estimated_bytes=item.estimated_bytes,
+            actual_bytes=item.actual_bytes,
+            paths=tuple(
+                public_display_path(Path(path), home=self.context.home, root=self.context.root, public_roots=public_roots)
+                for path in item.paths
+            ),
+            command_output=item.command_output,
+            requires_confirmation=item.requires_confirmation,
+            recoverable=item.recoverable,
+            scope_status=item.scope_status,
+        )
 
     def _make_report(
         self,
@@ -1117,11 +1345,12 @@ class StorageManager:
         before_total_bytes = sum(scan.total_bytes for scan in before_scans)
         after_total_bytes = sum(scan.total_bytes for scan in after_scans)
         estimated_reclaimed_bytes = sum(item.estimated_bytes for item in plan_items if item.status in {"planned", "ready", "cleaned"})
+        public_roots = report_public_roots(self.context)
         return StorageReport(
             created_at=now_iso(),
             mode=mode,
-            home=str(self.context.home),
-            root=str(self.context.root),
+            home=public_display_path(self.context.home, home=self.context.home, root=self.context.root, public_roots=public_roots),
+            root=public_display_path(self.context.root, home=self.context.home, root=self.context.root, public_roots=public_roots),
             days_to_keep=self.context.days_to_keep,
             dry_run=self.context.dry_run or not self.context.apply,
             apply_requested=self.context.apply,
@@ -1131,9 +1360,10 @@ class StorageManager:
             after_total_bytes=after_total_bytes,
             estimated_reclaimed_bytes=estimated_reclaimed_bytes,
             actual_reclaimed_bytes=actual_reclaimed_bytes,
-            top_consumers=self._build_top_consumers(before_scans),
-            plan_items=plan_items,
-            notes=notes,
+            top_consumers=self._build_top_consumers(after_scans if mode == "clean" else before_scans),
+            plan_items=[self._public_plan_item(item) for item in plan_items],
+            notes=[public_note(note) for note in notes],
+            approved_targets=tuple(sorted(self.context.approved_targets)),
         )
 
     def audit(self) -> StorageReport:
@@ -1176,6 +1406,9 @@ class StorageManager:
 
     def _collect_notes(self, plan_items: Sequence[PlanItem], scans: Sequence[TargetScan]) -> list[str]:
         notes: list[str] = []
+        if self.context.approved_targets:
+            notes.append(f"approved targets: {', '.join(sorted(self.context.approved_targets))}")
+        notes.append("cleanup rule: list exact targets first, confirm, then clean only within approved scope")
         for item in plan_items:
             if item.status == "skipped":
                 notes.append(f"{item.target_id}: {item.reason}")
@@ -1199,6 +1432,7 @@ def render_markdown(report: StorageReport) -> str:
         f"- Free after: {human_bytes(report.after_free_bytes)}",
         f"- Estimated reclaimed: {human_bytes(report.estimated_reclaimed_bytes)}",
         f"- Actual reclaimed: {human_bytes(report.actual_reclaimed_bytes)}",
+        f"- Approved targets: {', '.join(report.approved_targets) if report.approved_targets else 'none'}",
         "",
         "## Top Consumers",
     ]
@@ -1211,11 +1445,16 @@ def render_markdown(report: StorageReport) -> str:
     lines.extend(
         [
             "",
+            "## Cleanup Boundary",
+            "- Review the exact target list first.",
+            "- Confirm exact targets before apply.",
+            "- Cleanup must stay inside the approved target list and explicit confirmations.",
+            "",
             "## Cleaned / Planned",
         ]
     )
     for item in report.plan_items:
-        lines.append(f"- `{item.target_id}` [{item.status}] {item.reason}")
+        lines.append(f"- `{item.target_id}` [{item.status}] [{item.scope_status}] {item.reason}")
     lines.extend(
         [
             "",
@@ -1232,8 +1471,9 @@ def render_markdown(report: StorageReport) -> str:
         [
             "",
             "## Next Step Options",
-            "1. Re-run with `--apply --yes` after reviewing blocked targets.",
-            "2. Narrow the scan with `--flutter-search-root` or `--app-path` for focused cleanup.",
+            "1. Re-run `plan` or `audit` to review the exact list before any cleanup.",
+            "2. Re-run with `--approved-targets <exact-target-ids>` and any required `--confirm-targets <exact-target-id>` after reviewing blocked targets.",
+            "3. Narrow the scan with `--flutter-search-root`, `--app-path`, or `--include-hidden-home` for focused cleanup.",
         ]
     )
     return "\n".join(lines)
@@ -1245,7 +1485,8 @@ def render_text(report: StorageReport) -> str:
         f"Actions taken: {sum(1 for item in report.plan_items if item.status == 'cleaned')} cleaned, {sum(1 for item in report.plan_items if item.status == 'blocked')} blocked, {sum(1 for item in report.plan_items if item.status == 'skipped')} skipped.",
         f"Verification status: {'dry-run' if report.dry_run else 'applied'}.",
         f"Free space: {human_bytes(report.before_free_bytes)} -> {human_bytes(report.after_free_bytes)}.",
-        "Next safe step: inspect remaining hotspots or re-run with explicit confirmation for risky targets.",
+        f"Approved scope: {', '.join(report.approved_targets) if report.approved_targets else 'none'}.",
+        "Next safe step: inspect the exact list first, then re-run with approved targets and explicit confirmations only.",
     ]
     return "\n".join(lines)
 
@@ -1257,6 +1498,12 @@ def _parse_csv(value: str | None) -> frozenset[str]:
     return frozenset(parts)
 
 
+def _parse_path_csv(value: str | None) -> tuple[Path, ...]:
+    if not value:
+        return ()
+    return tuple(Path(part.strip()).expanduser().resolve() for part in value.split(",") if part.strip())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Audit and clean macOS storage safely.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1266,9 +1513,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--root", default="")
         p.add_argument("--days-to-keep", type=int, default=7)
         p.add_argument("--confirm-targets", default="")
+        p.add_argument("--approved-targets", default="")
         p.add_argument("--flutter-search-root", default="")
         p.add_argument("--app-path", default="")
         p.add_argument("--include-system", action="store_true")
+        p.add_argument("--system-roots", default="")
+        p.add_argument("--include-hidden-home", action="store_true")
         p.add_argument("--json", action="store_true")
         p.add_argument("--markdown", action="store_true")
 
@@ -1294,6 +1544,7 @@ def _context_from_args(args: argparse.Namespace) -> StorageContext:
     root = Path(args.root).expanduser().resolve() if args.root else home
     flutter_root = Path(args.flutter_search_root).expanduser().resolve() if args.flutter_search_root else None
     app_path = Path(args.app_path).expanduser().resolve() if args.app_path else None
+    system_roots = _parse_path_csv(getattr(args, "system_roots", "") or os.environ.get("MAC_STORAGE_SYSTEM_ROOTS"))
     return StorageContext(
         home=home,
         root=root,
@@ -1303,31 +1554,37 @@ def _context_from_args(args: argparse.Namespace) -> StorageContext:
         yes=bool(getattr(args, "yes", False)),
         include_system=bool(args.include_system),
         confirm_targets=_parse_csv(args.confirm_targets),
+        approved_targets=_parse_csv(getattr(args, "approved_targets", "")),
+        include_hidden_home=bool(getattr(args, "include_hidden_home", False)),
         flutter_search_root=flutter_root,
         app_path=app_path,
+        system_roots=system_roots or DEFAULT_SYSTEM_ROOTS,
     )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
-    ctx = _context_from_args(args)
-    manager = StorageManager(ctx)
+    try:
+        args = parser.parse_args(argv)
+        ctx = _context_from_args(args)
+        manager = StorageManager(ctx)
 
-    if args.command == "audit":
-        report = manager.audit()
-    elif args.command == "plan":
-        report = manager.plan()
-    else:
-        report = manager.clean() if ctx.apply and not ctx.dry_run else manager.audit()
+        if args.command == "audit":
+            report = manager.audit()
+        elif args.command == "plan":
+            report = manager.plan()
+        else:
+            report = manager.clean() if ctx.apply and not ctx.dry_run else manager.plan()
 
-    if getattr(args, "json", False):
-        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
-    elif getattr(args, "markdown", False):
-        print(render_markdown(report))
-    else:
-        print(render_text(report))
-    return 0
+        if getattr(args, "json", False):
+            print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        elif getattr(args, "markdown", False):
+            print(render_markdown(report))
+        else:
+            print(render_text(report))
+        return 0
+    except ValueError as exc:
+        parser.exit(2, f"error: {exc}\n")
 
 
 if __name__ == "__main__":

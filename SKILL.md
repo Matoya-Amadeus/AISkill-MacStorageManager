@@ -16,19 +16,12 @@ Use this skill when user asks to clean disk, free storage, find large files, rem
 
 ## Workflow
 1. Run `scripts/audit_storage.sh` to produce a markdown report from the Python core.
-2. Explain largest categories and proposed cleanup targets.
-3. Run `scripts/safe_clean.sh` only after user confirms.
-4. Re-run audit and show before/after delta.
-
-## Compatibility
-- Agent-neutral: any agent that can read `SKILL.md` and execute local shell/Python commands can use this skill.
-- The workflow is not tied to any one agent runtime; `agents/openai.yaml` is optional UI metadata for loaders that support it.
-- Optional tools (`brew`, `docker`, `flutter`, `xcrun`) are skipped when absent, so the skill still works in lean environments.
-
-## Requirements
-- macOS
-- Python 3.10+
-- `zsh` or another POSIX-compatible shell for the wrappers
+2. Always list the exact cleanup candidates first, including target IDs, blocked items, and anything explicitly out of scope.
+3. Convert any user-facing numbered choices back into exact `target_id` values before execution.
+4. Build an approved cleanup list and echo that exact list back before apply.
+5. Before apply, show the cleanup plan plus blocked/high-risk targets so the user can see what will not be touched.
+6. Run `scripts/safe_clean.sh` only after user confirms low-risk cleanup. `safe_clean.sh` must not unlock medium/high-risk targets by itself; Downloads, Trash, Docker, app leftovers, system paths, hidden home items, and other out-of-plan targets require exact target confirmation and must stay inside the approved list.
+7. Re-run audit and show before/after delta.
 
 ## Safe targets
 - `~/Library/Caches/*`
@@ -36,6 +29,17 @@ Use this skill when user asks to clean disk, free storage, find large files, rem
 - `~/.npm/_cacache`, `~/.pnpm-store`, `~/Library/Caches/pip`
 - Playwright browser caches when not used (`~/Library/Caches/ms-playwright`)
 - Xcode DerivedData (`~/Library/Developer/Xcode/DerivedData`)
+
+## Confirmation semantics
+
+- Generic `--yes` applies low-risk cleanup only.
+- Exact `target_id` confirmation can unlock that one target.
+- Exact approved cleanup list is required before hidden-home or other sensitive cleanup; confirmation alone is not enough if the target is outside the approved list.
+- Category-level confirmation is allowed only for low-risk targets.
+- Medium/high-risk targets stay blocked unless named through `--confirm-targets <exact-target-id>`.
+- Never treat a broad user phrase like "clean caches" as permission to clean Downloads, Trash, Docker, app leftovers, or personal documents.
+- Never treat a numbered UI choice as permission by itself; resolve it to the exact target IDs and echo them before running apply.
+- Cleanup execution must strictly follow the user-confirmed list and must not touch anything outside that list.
 
 ## High-risk targets (explicit confirmation required)
 - `~/Downloads` bulk deletion
@@ -46,6 +50,7 @@ Use this skill when user asks to clean disk, free storage, find large files, rem
 ## Output format
 Provide:
 - Top space consumers
+- Exact approved cleanup list
 - What was cleaned or planned
 - Estimated reclaimed GB
 - Free before/after
@@ -56,7 +61,9 @@ Provide:
 
 ## Output contract
 - Provide: root conclusion, actions taken, verification status, free-space delta, and next safe step.
-- Default to audit-first behavior; `safe_clean.sh` maps to `clean --apply --yes`.
+- Default to audit-first behavior; `safe_clean.sh` maps to `clean --apply --yes`, where `--yes` is intentionally limited to low-risk targets.
+- Include blocked/high-risk targets in the pre-apply summary whenever they have reclaimable bytes.
+- For hidden home folders, root-owned caches, app leftovers, or Trash batches, show the exact target list first and do not clean anything outside the approved target list.
 
 ## Safety And Scope Gates
 
@@ -72,6 +79,7 @@ Provide:
 - Confirm pass/fail criteria explicitly before marking completion.
 - Include one negative-path check (error/invalid input) where applicable.
 - Report verification evidence: commands executed, observed result, and residual risks.
+- Treat shared reports as public by default: redact user-specific absolute paths and sensitive diagnostic details unless the operator explicitly asks for raw output.
 
 ## Security And Privacy Controls
 
