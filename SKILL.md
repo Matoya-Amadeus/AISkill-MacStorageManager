@@ -1,121 +1,86 @@
 ---
 name: "mac-storage-manager"
-description: "Audit and manage macOS disk usage safely with staged cleanup and rollback-minded operations. Use when the request clearly belongs to this skill domain. Do not use for unrelated tasks."
+description: "Audit and manage macOS disk usage safely with staged cleanup, source tracing, redacted reports, and rollback-minded operations. Use when the request clearly belongs to this skill domain. Do not use for unrelated tasks."
 ---
 
 # Mac Storage Manager
 
 ## Trigger
-Use this skill when user asks to clean disk, free storage, find large files, remove caches, or reduce macOS space pressure.
+Use this skill when a user asks to clean disk, free storage, find large files, remove caches, reduce macOS space pressure, or diagnose a folder/app/cache that keeps reappearing after deletion.
 
 ## Principles
 - Safety first: default to read-only audit.
-- Never delete personal media/documents unless user explicitly points to paths.
+- Reappearance first: if a folder regenerates, identify the trigger chain before deleting runtime artifacts.
+- Never delete personal media/documents unless the user explicitly points to exact paths.
 - Prefer reversible cleanup (`trash`) for user files.
 - Prioritize regenerable data: caches, logs, temp artifacts, old tool downloads.
+- Protect browser identity/session data and credentials by default.
+- Treat shared reports as public by default: redact home, root, private absolute paths, and sensitive diagnostic details.
+
+## Source Layers
+Classify every finding/target before proposing cleanup:
+
+- `active_trigger`: LaunchAgents, LaunchDaemons, Docker containers, shell startup, scheduled launchers.
+- `runtime_artifact`: caches, logs, build outputs, temp files.
+- `repo_reference`: scripts, configs, skill docs, IDE/project references.
+- `historical_index`: metrics, audit receipts, graph JSONL, SBOM/provenance, generated snapshots, eval suites.
+- `user_data`: Downloads, Trash, media, documents, hidden home folders.
+- `protected_session`: browser identity/session/cookie/login/token/key material.
 
 ## Workflow
-1. Run `scripts/audit_storage.sh` to produce a markdown report from the Python core.
-2. Always list the exact cleanup candidates first, including target IDs, blocked items, and anything explicitly out of scope.
-3. Convert any user-facing numbered choices back into exact `target_id` values before execution.
-4. Build an approved cleanup list and echo that exact list back before apply.
-5. Before apply, show the cleanup plan plus blocked/high-risk targets so the user can see what will not be touched.
-6. Run `scripts/safe_clean.sh` only after user confirms low-risk cleanup. `safe_clean.sh` must not unlock medium/high-risk targets by itself; Downloads, Trash, Docker, app leftovers, system paths, hidden home items, and other out-of-plan targets require exact target confirmation and must stay inside the approved list.
-7. Re-run audit and show before/after delta.
+1. Clarify the target path and/or keyword.
+2. For reappearing folders, run `scripts/mac_storage_manager.py trace --path <TARGET_PATH> --keyword <KEYWORD>` and remove `active_trigger` causes first.
+3. Run `scripts/audit_storage.sh` to produce a read-only markdown report.
+4. List exact cleanup candidates, `target_id`, `source_layer`, protection level, blocked items, and explicit out-of-scope items.
+5. Convert any user-facing numbered choices back into exact `target_id` values before execution.
+6. Build the approved cleanup list and echo that exact list before apply.
+7. Run `scripts/safe_clean.sh` or `clean --apply` only after confirmation; then re-audit and run scoped residual search with `--require-zero-hit <PATTERN>` when a keyword/path was part of the task.
 
-## Safe targets
+## Safe Targets
 - `~/Library/Caches/*`
 - `~/Library/Logs/*`
 - `~/.npm/_cacache`, `~/.pnpm-store`, `~/Library/Caches/pip`
 - Playwright browser caches when not used (`~/Library/Caches/ms-playwright`)
 - Xcode DerivedData (`~/Library/Developer/Xcode/DerivedData`)
 
-## Confirmation semantics
-
+## Confirmation Semantics
 - Generic `--yes` applies low-risk cleanup only.
-- Exact `target_id` confirmation can unlock that one target.
-- Exact approved cleanup list is required before hidden-home or other sensitive cleanup; confirmation alone is not enough if the target is outside the approved list.
+- Medium/high-risk cleanup requires the exact `target_id` in `--approved-targets`; if the target also requires confirmation, it also needs exact `--confirm-targets <TARGET_ID>`.
+- Exact approved cleanup list is required before hidden-home, Docker, Trash, Downloads, app leftovers, system paths, and other sensitive cleanup.
 - Category-level confirmation is allowed only for low-risk targets.
-- Medium/high-risk targets stay blocked unless named through `--confirm-targets <exact-target-id>`.
-- Never treat a broad user phrase like "clean caches" as permission to clean Downloads, Trash, Docker, app leftovers, or personal documents.
-- Never treat a numbered UI choice as permission by itself; resolve it to the exact target IDs and echo them before running apply.
+- Never treat a broad phrase like "clean caches" as permission to clean Downloads, Trash, Docker, app leftovers, hidden-home items, or personal documents.
 - Cleanup execution must strictly follow the user-confirmed list and must not touch anything outside that list.
 
-## High-risk targets (explicit confirmation required)
-- `~/Downloads` bulk deletion
-- VM/Docker images
-- media libraries (`Photos`, `Movies`)
-- app support data containing tokens/sessions
+## High-Risk / Blocked Targets
+- Downloads bulk deletion.
+- Trash cleanup.
+- VM/Docker images and `docker system prune`.
+- hidden-home folders and repo metadata such as `~/.git`.
+- App support data containing token/session state.
+- Firefox/Chrome/Safari/OpenAI/ChatGPT cookies, local storage, login DBs, sessionstore, Keychain, `.ssh`, and credential material are `protected_session` and blocked by default.
 
-## Output format
+## Output Format
 Provide:
-- Top space consumers
-- Exact approved cleanup list
-- What was cleaned or planned
-- Estimated reclaimed GB
-- Free before/after
-- Residual hotspots and next options
-
-## When to use
-- Use this skill when the task clearly matches the skill description and domain.
-
-## Output contract
-- Provide: root conclusion, actions taken, verification status, free-space delta, and next safe step.
-- Default to audit-first behavior; `safe_clean.sh` maps to `clean --apply --yes`, where `--yes` is intentionally limited to low-risk targets.
-- Include blocked/high-risk targets in the pre-apply summary whenever they have reclaimable bytes.
-- For hidden home folders, root-owned caches, app leftovers, or Trash batches, show the exact target list first and do not clean anything outside the approved target list.
-
-## Safety And Scope Gates
-
-- Use this skill only when the request clearly matches the skill domain.
-- Do not execute out-of-scope actions, hidden fallback branches, or unrelated refactors.
-- Require explicit user intent before risky operations (network, destructive file ops, privileged commands).
-- Keep the shortest valid path to the objective; reject patch-only detours that hide root cause.
-- If key motivation or acceptance criteria are unclear, pause and request clarification before execution.
+- Top space consumers.
+- Exact approved cleanup list.
+- Source layer (`active_trigger`, `runtime_artifact`, `repo_reference`, `historical_index`, `user_data`, `protected_session`).
+- Protection level (`normal`, `exact_confirm`, `approved_plan`, `blocked`).
+- Rollback strategy (`none`, `trash`, `backup_manifest`, `copy_backup`).
+- What was cleaned or planned.
+- Backup manifest and cleanup receipt path for apply runs.
+- Residual validation status for any `--require-zero-hit` pattern.
+- Estimated reclaimed GB and free before/after.
+- Residual hotspots and next safe options.
 
 ## Verification And Release Criteria
-
-- Run a scoped validation pass after major edits using available checks (`test`, `validate`, `check`, or equivalent smoke path).
+- Run a scoped validation pass after major edits using available checks (`python3 -m unittest`, `py_compile`, or equivalent smoke path).
+- Include one negative-path check where applicable.
+- Confirm trace reports, cleanup reports, receipts, and sample hits do not expose private absolute paths, usernames, tokens, cookies, session values, or machine-specific paths.
 - Confirm pass/fail criteria explicitly before marking completion.
-- Include one negative-path check (error/invalid input) where applicable.
-- Report verification evidence: commands executed, observed result, and residual risks.
-- Treat shared reports as public by default: redact user-specific absolute paths and sensitive diagnostic details unless the operator explicitly asks for raw output.
 
 ## Security And Privacy Controls
-
 - Avoid exposing secrets, tokens, credentials, or sensitive data in outputs/logs.
 - Redact sensitive values in examples and diagnostic snippets.
 - Treat external inputs as untrusted; validate before use.
 - Minimize agency: do not perform privileged or irreversible actions without explicit permission.
-
-
-## Business Objective
-
-- Increase operational reliability and decision quality for recurring engineering workflows.
-- Reduce rework by enforcing explicit constraints and repeatable execution patterns.
-
-## Target Users And Scenarios
-
-- Primary: maintainers/operators managing long-running repo and agent workflows.
-- Secondary: collaborators requiring observable, auditable execution state.
-
-## Business Deliverables
-
-- Provide operationally actionable outputs (checks, plans, diffs, status evidence).
-- Provide concise residual-risk statement for follow-up decisions.
-
-## Business Acceptance Criteria
-
-- Requested workflow is completed with evidence and no hidden side effects.
-- Policy and guardrail requirements are satisfied for in-scope actions.
-- Outputs are usable for immediate next-step execution.
-
-## Business Boundaries And Non-Goals
-
-- Do not bypass repository/user hard constraints for speed.
-- Do not silently broaden scope beyond requested operational objective.
-
-## Business Risks And Constraints
-
-- Risk: automation overreach; mitigate with explicit gates and user-intent checks.
-- Risk: stale operational assumptions; mitigate with fresh preflight verification.
+- Default-block browser/session/key material; do not offer a normal confirmation bypass for protected session data.
